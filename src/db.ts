@@ -1,64 +1,9 @@
-﻿import { openDB } from 'idb'
-import type { Item, AppSettings } from './types'
+﻿import type { AppSettings, Item } from './types'
+import { supabase } from './supabase'
 
-const DB_NAME = 'dockfinity_costing_local'
-const DB_VERSION = 1
-const STORE_ITEMS = 'items'
-const STORE_SETTINGS = 'settings'
-
-export const db = openDB(DB_NAME, DB_VERSION, {
-  upgrade(db) {
-    if (!db.objectStoreNames.contains(STORE_ITEMS)) {
-      db.createObjectStore(STORE_ITEMS, { keyPath: 'id' })
-    }
-    if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
-      db.createObjectStore(STORE_SETTINGS)
-    }
-  }
-})
-
-export async function listItems(): Promise<Item[]> {
-  const d = await db
-  return (await d.getAll(STORE_ITEMS)) as Item[]
-}
-
-export async function upsertItem(item: Item): Promise<void> {
-  const d = await db
-  await d.put(STORE_ITEMS, item)
-}
-
-export async function deleteItem(id: string): Promise<void> {
-  const d = await db
-  await d.delete(STORE_ITEMS, id)
-}
-
-export async function getSettings(): Promise<AppSettings | null> {
-  const d = await db
-  return (await d.get(STORE_SETTINGS, 'app')) as AppSettings | null
-}
-
-export async function setSettings(s: AppSettings): Promise<void> {
-  const d = await db
-  await d.put(STORE_SETTINGS, s, 'app')
-}
-
-export async function exportAll(): Promise<{ version: 1; items: Item[]; settings: AppSettings }> {
-  const items = await listItems()
-  const settings = (await getSettings()) || defaultSettings()
-  return { version: 1, items, settings }
-}
-
-export async function importAll(blob: any): Promise<void> {
-  if (!blob || blob.version !== 1 || !Array.isArray(blob.items) || !blob.settings) {
-    throw new Error('Invalid backup file')
-  }
-  const d = await db
-  const tx1 = d.transaction(STORE_ITEMS, 'readwrite')
-  await tx1.store.clear()
-  for (const it of blob.items) await tx1.store.put(it)
-  await tx1.done
-
-  await setSettings(blob.settings as AppSettings)
+type BackupBlob = {
+  items: Item[]
+  settings: AppSettings
 }
 
 export function defaultSettings(): AppSettings {
@@ -67,5 +12,118 @@ export function defaultSettings(): AppSettings {
     circleAddPerKg: 5,
     circleExtraAddPerKg: 0,
     bagStandardKg: 80
+  }
+}
+
+async function requireUser() {
+  const { data, error } = await supabase.auth.getUser()
+  if (error) throw error
+  if (!data.user) throw new Error('Not logged in')
+  return data.user
+}
+
+// ---------- AUTH ----------
+export async function getSession() {
+  const { data, error } = await supabase.auth.getSession()
+  if (error) throw error
+  return data.session
+}
+
+export async function signInWithEmailOtp(email: string) {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin }
+  })
+  if (error) throw error
+}
+
+export async function signOut() {
+  const { error } = await supabase.auth.signOut()
+  if (error) throw error
+}
+
+// ---------- ITEMS ----------
+export async function listItems(): Promise<Item[]> {
+  const user = await requireUser()
+  const { data, error } = await supabase
+    .from('items')
+    .select('data')
+    .eq('user_id', user.id)
+    .order('updated_at', { ascending: false })
+
+  if (error) throw error
+  return (data || []).map((r: any) => r.data as Item)
+}
+
+export async function upsertItem(item: Item): Promise<void> {
+  const user = await requireUser()
+  const { error } = await supabase
+    .from('items')
+    .upsert({
+      id: item.id,
+      user_id: user.id,
+      name: item.name,
+      data: item
+    })
+  if (error) throw error
+}
+
+export async function deleteItem(id: string): Promise<void> {
+  const user = await requireUser()
+  const { error } = await supabase
+    .from('items')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id)
+
+  if (error) throw error
+}
+
+// ---------- SETTINGS ----------
+export async function getSettings(): Promise<AppSettings | null> {
+  const user = await requireUser()
+  const { data, error } = await supabase
+    .from('settings')
+    .select('data')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (error) throw error
+  return data?.data ?? null
+}
+
+export async function setSettings(s: AppSettings): Promise<void> {
+  const user = await requireUser()
+  const { error } = await supabase
+    .from('settings')
+    .upsert({
+      user_id: user.id,
+      data: s
+    })
+  if (error) throw error
+}
+
+// ---------- BACKUP ----------
+export async function exportAll(): Promise<BackupBlob> {
+  const items = await listItems()
+  const settings = (await getSettings()) || defaultSettings()
+  return { items, settings }
+}
+
+export async function importAll(blob: BackupBlob): Promise<void> {
+  const user = await requireUser()
+
+  await setSettings(blob.settings || defaultSettings())
+
+  const payload = (blob.items || []).map(it => ({
+    id: it.id,
+    user_id: user.id,
+    name: it.name,
+    data: it
+  }))
+
+  if (payload.length) {
+    const { error } = await supabase.from('items').upsert(payload)
+    if (error) throw error
   }
 }

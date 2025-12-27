@@ -2,86 +2,231 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AppSettings, Item } from '../types'
 import { calculate } from '../calc'
-import {
-  defaultSettings,
-  deleteItem,
-  exportAll,
-  getSettings,
-  importAll,
-  listItems,
-  setSettings,
-  upsertItem
-} from '../db'
 import { makeId, seedItems, seedSettings } from '../seed'
+import { supabase } from '../supabase'
 
 type Tab = 'items' | 'calc' | 'backup'
-
 function deepClone<T>(x: T): T { return JSON.parse(JSON.stringify(x)) }
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('calc')
   const [items, setItems] = useState<Item[]>([])
   const [selectedId, setSelectedId] = useState<string>('')
-  const [settings, setLocalSettings] = useState<AppSettings>(defaultSettings())
+  const [settings, setLocalSettings] = useState<AppSettings>(seedSettings)
 
-  async function refresh() {
-    const all = await listItems()
-    setItems(all)
-    const s = await getSettings()
-    setLocalSettings(s || defaultSettings())
-    if (all.length && !selectedId) setSelectedId(all[0].id)
-    if (all.length && selectedId && !all.find(i => i.id === selectedId)) setSelectedId(all[0].id)
-  }
+  // Auth
+  const [session, setSession] = useState<any>(null)
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string>('')
 
-  useEffect(() => { refresh() }, [])
-
-  // Seed DB on first run
+  // ===========================
+  // Auth bootstrap
+  // ===========================
   useEffect(() => {
+    let mounted = true
     ;(async () => {
-      const all = await listItems()
-      const s = await getSettings()
-      if (all.length === 0) {
-        for (const it of seedItems) await upsertItem(it)
-      }
-      if (!s) {
-        await setSettings(seedSettings)
-      }
-      await refresh()
+      const { data } = await supabase.auth.getSession()
+      if (!mounted) return
+      setSession(data.session ?? null)
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+      setSession(s ?? null)
+    })
+
+    return () => {
+      mounted = false
+      sub.subscription.unsubscribe()
+    }
   }, [])
 
+  // ===========================
+  // Supabase data helpers
+  // ===========================
+  async function refresh() {
+    if (!session?.user?.id) return
+    setBusy(true)
+    setMsg('')
+
+    const uid = session.user.id
+
+    // settings
+    const settingsRes = await supabase
+      .from('settings')
+      .select('data')
+      .eq('user_id', uid)
+      .maybeSingle()
+
+    if (settingsRes.error) {
+      setBusy(false)
+      setMsg(`Settings load error: ${settingsRes.error.message}`)
+      return
+    }
+
+    const loadedSettings = (settingsRes.data?.data as AppSettings) ?? null
+    setLocalSettings(loadedSettings || seedSettings)
+
+    // items
+    const itemsRes = await supabase
+      .from('items')
+      .select('id,name,data')
+      .eq('user_id', uid)
+      .order('updated_at', { ascending: false })
+
+    if (itemsRes.error) {
+      setBusy(false)
+      setMsg(`Items load error: ${itemsRes.error.message}`)
+      return
+    }
+
+    const loadedItems: Item[] = (itemsRes.data || []).map((r: any) => ({
+      ...(r.data as Item),
+      id: r.id,
+      name: r.name
+    }))
+
+    // Seed if empty
+    if (loadedItems.length === 0) {
+      // seed items
+      for (const it of seedItems) {
+        const insertRes = await supabase.from('items').upsert({
+          user_id: uid,
+          id: it.id,
+          name: it.name,
+          data: it
+        })
+        if (insertRes.error) {
+          setBusy(false)
+          setMsg(`Seed items error: ${insertRes.error.message}`)
+          return
+        }
+      }
+
+      // seed settings (only if missing)
+      if (!loadedSettings) {
+        const up = await supabase.from('settings').upsert({
+          user_id: uid,
+          data: seedSettings
+        })
+        if (up.error) {
+          setBusy(false)
+          setMsg(`Seed settings error: ${up.error.message}`)
+          return
+        }
+      }
+
+      // reload after seeding
+      setBusy(false)
+      await refresh()
+      return
+    }
+
+    setItems(loadedItems)
+
+    // selection safety
+    if (loadedItems.length && !selectedId) setSelectedId(loadedItems[0].id)
+    if (loadedItems.length && selectedId && !loadedItems.find(i => i.id === selectedId)) setSelectedId(loadedItems[0].id)
+
+    setBusy(false)
+  }
+
+  useEffect(() => {
+    if (session?.user?.id) void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user?.id])
+
+  async function upsertItem(it: Item) {
+    if (!session?.user?.id) return
+    const uid = session.user.id
+    const res = await supabase.from('items').upsert({
+      user_id: uid,
+      id: it.id,
+      name: it.name,
+      data: it
+    })
+    if (res.error) throw new Error(res.error.message)
+  }
+
+  async function deleteItem(id: string) {
+    if (!session?.user?.id) return
+    const uid = session.user.id
+    const res = await supabase.from('items').delete().eq('user_id', uid).eq('id', id)
+    if (res.error) throw new Error(res.error.message)
+  }
+
+  async function setSettings(s: AppSettings) {
+    if (!session?.user?.id) return
+    const uid = session.user.id
+    const res = await supabase.from('settings').upsert({
+      user_id: uid,
+      data: s
+    })
+    if (res.error) throw new Error(res.error.message)
+  }
+
+  // ===========================
+  // UI actions
+  // ===========================
   const selected = useMemo(() => items.find(i => i.id === selectedId) || null, [items, selectedId])
   const result = useMemo(() => selected ? calculate(selected, settings) : null, [selected, settings])
 
   async function onDelete(id: string) {
-    await deleteItem(id)
-    await refresh()
+    try {
+      setBusy(true)
+      await deleteItem(id)
+      await refresh()
+    } catch (e: any) {
+      setMsg(e.message || 'Delete failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function onClone() {
     if (!selected) return
-    const copy = deepClone(selected)
-    copy.id = makeId()
-    copy.name = selected.name + ' (copy)'
-    await upsertItem(copy)
-    await refresh()
-    setSelectedId(copy.id)
-    setTab('items')
+    try {
+      setBusy(true)
+      const copy = deepClone(selected)
+      copy.id = makeId()
+      copy.name = selected.name + ' (copy)'
+      await upsertItem(copy)
+      await refresh()
+      setSelectedId(copy.id)
+      setTab('items')
+    } catch (e: any) {
+      setMsg(e.message || 'Clone failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function onSaveItem(it: Item) {
-    await upsertItem(it)
-    await refresh()
+    try {
+      setBusy(true)
+      await upsertItem(it)
+      await refresh()
+    } catch (e: any) {
+      setMsg(e.message || 'Save failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
+  // IMPORTANT: don’t refresh on every settings keypress (keeps UI stable)
   async function onSaveSettings(s: AppSettings) {
-    await setSettings(s)
-    setLocalSettings(s)
+    try {
+      setLocalSettings(s) // optimistic UI
+      await setSettings(s)
+    } catch (e: any) {
+      setMsg(e.message || 'Settings save failed')
+    }
   }
 
   async function doExport() {
-    const blob = await exportAll()
+    const blob = { settings, items }
     const text = JSON.stringify(blob, null, 2)
     const file = new Blob([text], { type: 'application/json' })
     const url = URL.createObjectURL(file)
@@ -93,33 +238,131 @@ export default function App() {
   }
 
   async function doImport(file: File) {
-    const text = await file.text()
-    const blob = JSON.parse(text)
-    await importAll(blob)
-    await refresh()
-    alert('Imported successfully')
+    try {
+      setBusy(true)
+      const text = await file.text()
+      const blob = JSON.parse(text) as { settings?: AppSettings; items?: Item[] }
+      if (blob.settings) {
+        await setSettings(blob.settings)
+        setLocalSettings(blob.settings)
+      }
+      if (blob.items?.length) {
+        for (const it of blob.items) await upsertItem(it)
+      }
+      await refresh()
+      alert('Imported successfully')
+    } catch (e: any) {
+      setMsg(e.message || 'Import failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // ===========================
+  // Auth actions
+  // ===========================
+  async function doAuth() {
+    setMsg('')
+    setBusy(true)
+    try {
+      if (!authEmail || !authPassword) throw new Error('Email + password required')
+
+      if (authMode === 'signin') {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: authEmail,
+          password: authPassword
+        })
+        if (error) throw new Error(error.message)
+      } else {
+        const { error } = await supabase.auth.signUp({
+          email: authEmail,
+          password: authPassword
+        })
+        if (error) throw new Error(error.message)
+        setMsg('Signup done. If email confirmation is enabled, verify email and sign in.')
+      }
+    } catch (e: any) {
+      setMsg(e.message || 'Auth failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function doLogout() {
+    setBusy(true)
+    setMsg('')
+    await supabase.auth.signOut()
+    setItems([])
+    setSelectedId('')
+    setBusy(false)
+  }
+
+  // ===========================
+  // Render
+  // ===========================
+  if (!session?.user?.id) {
+    return (
+      <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial', padding: 16, maxWidth: 520, margin: '0 auto' }}>
+        <h2 style={{ margin: 0 }}>Dockfinity Costing</h2>
+        <p style={{ marginTop: 6, color: '#444' }}>Login required (Supabase). Data will be saved in cloud.</p>
+
+        <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 12, marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <button onClick={() => setAuthMode('signin')} disabled={authMode === 'signin'}>Sign in</button>
+            <button onClick={() => setAuthMode('signup')} disabled={authMode === 'signup'}>Sign up</button>
+          </div>
+
+          <label style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+            <span>Email</span>
+            <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="you@domain.com" />
+          </label>
+
+          <label style={{ display: 'grid', gap: 6, marginBottom: 10 }}>
+            <span>Password</span>
+            <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="••••••••" />
+          </label>
+
+          <button onClick={doAuth} disabled={busy} style={{ width: '100%' }}>
+            {busy ? 'Please wait…' : (authMode === 'signin' ? 'Sign in' : 'Sign up')}
+          </button>
+
+          {msg && <p style={{ marginTop: 10, color: '#b00020' }}>{msg}</p>}
+        </div>
+      </div>
+    )
   }
 
   return (
     <div style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, Arial', padding: 16, maxWidth: 1200, margin: '0 auto' }}>
-      <h2 style={{ margin: 0 }}>Dockfinity Costing (Local PWA)</h2>
-      <p style={{ marginTop: 6, color: '#444' }}>
-        Local-only. Offline. All rates editable. Backup/restore JSON.
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div>
+          <h2 style={{ margin: 0 }}>Dockfinity Costing</h2>
+          <p style={{ marginTop: 6, color: '#444' }}>
+            Cloud-saved via Supabase. Offline behavior depends on browser cache.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ color: '#555' }}>{session.user.email}</span>
+          <button onClick={doLogout} disabled={busy}>Logout</button>
+        </div>
+      </div>
+
+      {msg && <p style={{ marginTop: 10, color: '#b00020' }}>{msg}</p>}
+      {busy && <p style={{ marginTop: 10, color: '#555' }}>Working…</p>}
 
       <div style={{ display: 'flex', gap: 8, margin: '12px 0', flexWrap: 'wrap' }}>
         <button onClick={() => setTab('calc')} disabled={tab === 'calc'}>Calculator</button>
         <button onClick={() => setTab('items')} disabled={tab === 'items'}>Items</button>
         <button onClick={() => setTab('backup')} disabled={tab === 'backup'}>Backup</button>
         <span style={{ flex: 1 }} />
-        <button onClick={onClone} disabled={!selected}>Clone Selected Item</button>
+        <button onClick={onClone} disabled={!selected || busy}>Clone Selected Item</button>
       </div>
 
       {tab === 'calc' && (
         <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 12 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <label>Item:</label>
-            <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
+            <select value={selectedId} onChange={(e) => setSelectedId(e.target.value)} disabled={busy}>
               {items.map(it => <option key={it.id} value={it.id}>{it.name}</option>)}
             </select>
 
@@ -196,8 +439,8 @@ export default function App() {
             {items.map(it => (
               <div key={it.id} style={{ padding: 8, borderRadius: 8, background: it.id === selectedId ? '#f3f3f3' : 'transparent', marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                  <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setSelectedId(it.id)}>{it.name}</button>
-                  <button onClick={() => onDelete(it.id)}>Del</button>
+                  <button style={{ flex: 1, textAlign: 'left' }} onClick={() => setSelectedId(it.id)} disabled={busy}>{it.name}</button>
+                  <button onClick={() => onDelete(it.id)} disabled={busy}>Del</button>
                 </div>
               </div>
             ))}
@@ -214,7 +457,7 @@ export default function App() {
         <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 12 }}>
           <h3 style={{ marginTop: 0 }}>Backup / Restore</h3>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={doExport}>Export JSON</button>
+            <button onClick={doExport} disabled={busy}>Export JSON</button>
             <label style={{ border: '1px solid #ccc', padding: '6px 10px', borderRadius: 8, cursor: 'pointer' }}>
               Import JSON
               <input
@@ -230,7 +473,7 @@ export default function App() {
             </label>
           </div>
           <p style={{ color: '#666', marginTop: 10 }}>
-            Local-only means data stays on this device unless you export/import.
+            Export/Import still works. Cloud is primary storage now.
           </p>
         </div>
       )}
@@ -252,7 +495,6 @@ function ItemEditor({ item, onSave }: { item: Item; onSave: (it: Item) => Promis
 
   useEffect(() => { setIt(item) }, [item])
 
-  // safe defaults if induction missing in older saved items
   function ensureInduction(part: Item['box']): Item['box'] {
     if (part.induction) return part
     return { ...part, induction: { enabled: false, ratePerKg: 10 } }

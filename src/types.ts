@@ -48,8 +48,16 @@ export type KundaSpec = {
 
 export type PartSpec = {
   label: 'box' | 'cover';
+
+  // Circle dimensions (for weight)
   circleSizeIn: number;
   thicknessMm: ThicknessMm;
+
+  // NEW: circle material rate PER KG for this part (box/cover).
+  // Optional for backward compatibility with old saved items.
+  // If missing, calc.ts can fallback to settings (170+5 etc).
+  circleRatePerKg?: number;
+
   press: PressStage;
   induction?: InductionStage;   // optional for backward compatibility
 };
@@ -66,9 +74,12 @@ export type Item = {
 };
 
 export type AppSettings = {
+  // Keep these for backward compatibility / fallback defaults.
+  // Later we can hide these from UI if you want item-level only.
   circleBaseRate: number;       // e.g. 170
   circleAddPerKg: number;       // +5 always
   circleExtraAddPerKg: number;  // optional +5 for 0.33 etc (default 0)
+
   bagStandardKg: number;        // 80
 };
 
@@ -96,7 +107,7 @@ export type CalcResult = {
     circleKgInTotal: number;
     circleCost: number;
     pressCost: number;
-    inductionCost: number;   // NEW
+    inductionCost: number;
     polishCost: number;
     packingCost: number;
     kundaCost: number;

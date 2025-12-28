@@ -1,3 +1,4 @@
+// calc.ts
 import type { Item, AppSettings, CalcResult } from './types'
 
 // ===========================
@@ -49,6 +50,11 @@ function r3(n: number) { return Math.round(n * 1000) / 1000 }
 // NEW:
 // - Optional Induction charge on delivered kala (after press).
 //   If induction missing/disabled => 0 (no change).
+//
+// NEW (THIS CHANGE):
+// - Circle rate can be different for box vs cover:
+//   Use item.box.circleRatePerKg / item.cover.circleRatePerKg if present,
+//   else fallback to settings circle rate.
 
 type StageFlow = {
   circleKgIn: number
@@ -64,8 +70,8 @@ type StageFlow = {
 
 type PartCostResult = {
   flow: StageFlow
-  partCostExcludingFinalPackingCharge: number // includes circle+press+induction+polish, minus scrap credits
-  partRatePerKgPacked: number                 // cost per kg of delivered packed part (box/cover)
+  partCostExcludingFinalPackingCharge: number
+  partRatePerKgPacked: number
   components: {
     circleCost: number
     pressCharge: number
@@ -84,7 +90,7 @@ function computePartForwardCost(
   part: Item['box'],
   polish: Item['polish'],
   packing: Item['packing'],
-  circleRate: number
+  circleRatePerKg: number
 ): PartCostResult {
   const press = part.press
 
@@ -118,7 +124,7 @@ function computePartForwardCost(
   // -----------------------
   // COSTS (FORWARD METHOD)
   // -----------------------
-  const circleCost = pressInputCircleKg * circleRate
+  const circleCost = pressInputCircleKg * circleRatePerKg
 
   // Press charge on delivered kala
   const pressCharge = pressDeliveredKalaKg * press.ratePerKg
@@ -126,9 +132,10 @@ function computePartForwardCost(
   // Induction charge (optional) on delivered kala
   const inductionEnabled = !!part.induction?.enabled
   const inductionRate = part.induction?.ratePerKg ?? 0
-  const inductionCharge = (inductionEnabled && inductionRate > 0)
-    ? pressDeliveredKalaKg * inductionRate
-    : 0
+  const inductionCharge =
+    (inductionEnabled && inductionRate > 0)
+      ? pressDeliveredKalaKg * inductionRate
+      : 0
 
   // Polish charge on delivered polished
   const polishCharge = polishDeliveredKg * polish.ratePerKg
@@ -183,6 +190,22 @@ function computePartForwardCost(
   }
 }
 
+function fallbackCircleRate(settings: AppSettings): number {
+  return (
+    settings.circleBaseRate +
+    settings.circleAddPerKg +
+    (settings.circleExtraAddPerKg || 0)
+  )
+}
+
+function resolvePartCircleRatePerKg(part: Item['box'], settings: AppSettings): number {
+  // If part has explicit rate, it wins.
+  // Else fallback to settings (backward compatibility).
+  const explicit = (part as any).circleRatePerKg
+  if (typeof explicit === 'number' && isFinite(explicit) && explicit > 0) return explicit
+  return fallbackCircleRate(settings)
+}
+
 export function calculate(item: Item, settings: AppSettings): CalcResult {
   const bagKg = settings.bagStandardKg
 
@@ -214,15 +237,26 @@ export function calculate(item: Item, settings: AppSettings): CalcResult {
   const totalCoverKgPacked = (pcs * coverAfterPolishG) / 1000
 
   // ===========================
-  // RATES
+  // RATES (box vs cover circle)
   // ===========================
-  const circleRate =
-    settings.circleBaseRate +
-    settings.circleAddPerKg +
-    (settings.circleExtraAddPerKg || 0)
+  const boxCircleRate = resolvePartCircleRatePerKg(item.box, settings)
+  const coverCircleRate = resolvePartCircleRatePerKg(item.cover, settings)
 
-  const boxCostRes = computePartForwardCost(totalBoxKgPacked, item.box, item.polish, item.packing, circleRate)
-  const coverCostRes = computePartForwardCost(totalCoverKgPacked, item.cover, item.polish, item.packing, circleRate)
+  const boxCostRes = computePartForwardCost(
+    totalBoxKgPacked,
+    item.box,
+    item.polish,
+    item.packing,
+    boxCircleRate
+  )
+
+  const coverCostRes = computePartForwardCost(
+    totalCoverKgPacked,
+    item.cover,
+    item.polish,
+    item.packing,
+    coverCircleRate
+  )
 
   const boxCost = boxCostRes.partCostExcludingFinalPackingCharge
   const coverCost = coverCostRes.partCostExcludingFinalPackingCharge

@@ -34,10 +34,12 @@ const plainMap: Record<7 | 8 | 9 | 10, { box: number; cover: number; poly: numbe
 }
 
 // Default induction setup:
-// - enabled: true
-// - ratePerKg: 10
-// You can disable per-item by setting enabled=false or ratePerKg=0 in editor later (we will add UI next).
 const DEFAULT_INDUCTION = { enabled: false, ratePerKg: 10 }
+
+// NEW: default circle rates for seed (can be edited per item later)
+// If you want, change these 175 values as per your real box/cover circle prices.
+const DEFAULT_BOX_CIRCLE_RATE = 175
+const DEFAULT_COVER_CIRCLE_RATE = 175
 
 function bellyItem(size: 7 | 8 | 9 | 10, bag: 'heavy' | 'light'): Item {
   const m = bellyMap[size]
@@ -48,6 +50,8 @@ function bellyItem(size: 7 | 8 | 9 | 10, bag: 'heavy' | 'light'): Item {
       label: 'box',
       circleSizeIn: m.box,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_BOX_CIRCLE_RATE,
       press: { ratePerKg: 20, actualWastagePct: 4, jobWastagePct: 8, tutPct: 3, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -55,6 +59,8 @@ function bellyItem(size: 7 | 8 | 9 | 10, bag: 'heavy' | 'light'): Item {
       label: 'cover',
       circleSizeIn: m.cover,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_COVER_CIRCLE_RATE,
       press: { ratePerKg: 14, actualWastagePct: 0, jobWastagePct: 6, tutPct: 2, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -74,6 +80,8 @@ function plainItem(size: 7 | 8 | 9 | 10, bag: 'heavy' | 'light'): Item {
       label: 'box',
       circleSizeIn: m.box,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_BOX_CIRCLE_RATE,
       press: { ratePerKg: 16, actualWastagePct: 4, jobWastagePct: 8, tutPct: 3, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -81,6 +89,8 @@ function plainItem(size: 7 | 8 | 9 | 10, bag: 'heavy' | 'light'): Item {
       label: 'cover',
       circleSizeIn: m.cover,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_COVER_CIRCLE_RATE,
       press: { ratePerKg: 14, actualWastagePct: 0, jobWastagePct: 6, tutPct: 2, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -100,6 +110,8 @@ function item11(): Item {
       label: 'box',
       circleSizeIn: 11,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_BOX_CIRCLE_RATE,
       press: { ratePerKg: 20, actualWastagePct: 4, jobWastagePct: 8, tutPct: 2, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -107,6 +119,8 @@ function item11(): Item {
       label: 'cover',
       circleSizeIn: 8.5,
       thicknessMm: 0.26,
+      // NEW
+      circleRatePerKg: DEFAULT_COVER_CIRCLE_RATE,
       press: { ratePerKg: 18, actualWastagePct: 3, jobWastagePct: 7, tutPct: 2, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -141,6 +155,8 @@ function chennaiPot(
       label: 'box',
       circleSizeIn: boxIn,
       thicknessMm: boxTh,
+      // NEW
+      circleRatePerKg: DEFAULT_BOX_CIRCLE_RATE,
       press: { ratePerKg: 20, actualWastagePct: 4, jobWastagePct: 8, tutPct: 3, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },
@@ -148,6 +164,8 @@ function chennaiPot(
       label: 'cover',
       circleSizeIn: coverIn,
       thicknessMm: coverTh,
+      // NEW
+      circleRatePerKg: DEFAULT_COVER_CIRCLE_RATE,
       press: { ratePerKg: 18, actualWastagePct: 0, jobWastagePct: 0, tutPct: 2, scrapReturn: { enabled: true, ratePerKg: 50 } },
       induction: { ...DEFAULT_INDUCTION }
     },

@@ -59,12 +59,16 @@ export async function upsertItem(item: Item): Promise<void> {
   const user = await requireUser()
   const { error } = await supabase
     .from('items')
-    .upsert({
-      id: item.id,
-      user_id: user.id,
-      name: item.name,
-      data: item
-    })
+    .upsert(
+      {
+        id: item.id,
+        user_id: user.id,
+        name: item.name,
+        data: item
+      },
+      { onConflict: 'id' }
+    )
+
   if (error) throw error
 }
 
@@ -96,10 +100,14 @@ export async function setSettings(s: AppSettings): Promise<void> {
   const user = await requireUser()
   const { error } = await supabase
     .from('settings')
-    .upsert({
-      user_id: user.id,
-      data: s
-    })
+    .upsert(
+      {
+        user_id: user.id,
+        data: s
+      },
+      { onConflict: 'user_id' }
+    )
+
   if (error) throw error
 }
 
@@ -123,7 +131,9 @@ export async function importAll(blob: BackupBlob): Promise<void> {
   }))
 
   if (payload.length) {
-    const { error } = await supabase.from('items').upsert(payload)
+    const { error } = await supabase
+      .from('items')
+      .upsert(payload, { onConflict: 'id' })
     if (error) throw error
   }
 }

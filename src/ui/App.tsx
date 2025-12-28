@@ -505,7 +505,7 @@ function ItemEditor({ item, onSave }: { item: Item; onSave: (it: Item) => Promis
 
   return (
     <div>
-      <Num label="Name (edit in box below)" value={0} onChange={() => { }} />
+      // <Num label="Name (edit in box below)" value={0} onChange={() => { }} />
       <input value={it.name} onChange={(e) => setIt({ ...it, name: e.target.value })} style={{ width: '100%', marginBottom: 12 }} />
 
       <h4>Box</h4>
